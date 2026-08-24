@@ -42,3 +42,25 @@ func (q *RedisQueue) EnqueueWorkflow(
 		data,
 	).Err()
 }
+
+func (q *RedisQueue) DequeueWorkflow(
+	ctx context.Context,
+) (workflow.Workflow, error) {
+	result, err := q.Client.BLPop(
+		ctx,
+		0,
+		WorkflowQueue,
+	).Result()
+
+	if err != nil {
+		return workflow.Workflow{}, err
+	}
+
+	var wf workflow.Workflow
+
+	if err := json.Unmarshal([]byte(result[1]), &wf); err != nil {
+		return workflow.Workflow{}, err
+	}
+
+	return wf, nil
+}
