@@ -73,12 +73,42 @@ func main() {
 
 	// Run workflow
 	http.HandleFunc("/workflows/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/workflows/")
+
+		// Get execution history for a workflow
+		if strings.HasSuffix(path, "/executions") {
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			workflowID := strings.TrimSuffix(path, "/executions")
+
+			if workflowID == "" {
+				http.Error(w, "invalid workflow path", http.StatusBadRequest)
+				return
+			}
+
+			executions, err := database.GetExecutionsByWorkflowID(
+				db,
+				workflowID,
+			)
+			if err != nil {
+				http.Error(w, "failed to get executions", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(executions)
+			return
+		}
+
+		// Run workflow
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		path := strings.TrimPrefix(r.URL.Path, "/workflows/")
 		id := strings.TrimSuffix(path, "/run")
 
 		if id == path || id == "" {
@@ -92,7 +122,31 @@ func main() {
 			return
 		}
 
-		if err := redisQueue.EnqueueWorkflow(r.Context(), *wf); err != nil {
+		executionID := "exec_" + uuid.New().String()
+
+		if err := database.CreateExecution(
+			db,
+			executionID,
+			wf.ID,
+			"queued",
+		); err != nil {
+			http.Error(w, "failed to create execution", http.StatusInternalServerError)
+			return
+		}
+
+		if err := redisQueue.EnqueueWorkflow(r.Context(), executionID, *wf); err != nil {
+			if updateErr := database.UpdateExecutionStatus(
+				db,
+				executionID,
+				"failed",
+			); updateErr != nil {
+				log.Printf(
+					"Failed to update execution status: id=%s error=%v",
+					executionID,
+					updateErr,
+				)
+			}
+
 			http.Error(w, "failed to enqueue workflow", http.StatusInternalServerError)
 			return
 		}
@@ -101,9 +155,33 @@ func main() {
 		w.WriteHeader(http.StatusAccepted)
 
 		json.NewEncoder(w).Encode(map[string]string{
-			"status":      "queued",
-			"workflow_id": wf.ID,
+			"execution_id": executionID,
+			"workflow_id":  wf.ID,
+			"status":       "queued",
 		})
+	})
+
+	http.HandleFunc("/executions/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		executionID := strings.TrimPrefix(r.URL.Path, "/executions/")
+
+		if executionID == "" {
+			http.Error(w, "invalid execution path", http.StatusBadRequest)
+			return
+		}
+
+		exec, err := database.GetExecutionByID(db, executionID)
+		if err != nil {
+			http.Error(w, "execution not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(exec)
 	})
 
 	log.Println("FlowGenie server running on :8080")

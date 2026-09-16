@@ -9,6 +9,11 @@ import (
 	"github.com/SaanviShukla0412/flowGenie/internal/workflow"
 )
 
+type WorkflowJob struct {
+	ExecutionID string            `json:"execution_id"`
+	Workflow    workflow.Workflow `json:"workflow"`
+}
+
 const WorkflowQueue = "workflow_jobs"
 
 type RedisQueue struct {
@@ -30,22 +35,25 @@ func (q *RedisQueue) Ping(ctx context.Context) error {
 
 func (q *RedisQueue) EnqueueWorkflow(
 	ctx context.Context,
+	executionID string,
 	wf workflow.Workflow,
 ) error {
-	data, err := json.Marshal(wf)
+	job := WorkflowJob{
+		ExecutionID: executionID,
+		Workflow:    wf,
+	}
+
+	data, err := json.Marshal(job)
 	if err != nil {
 		return err
 	}
-	return q.Client.RPush( // RPush : pushing somethin to the rightmost or in the last of the redis list
-		ctx,
-		WorkflowQueue,
-		data,
-	).Err()
+
+	return q.Client.RPush(ctx, WorkflowQueue, data).Err()
 }
 
 func (q *RedisQueue) DequeueWorkflow(
 	ctx context.Context,
-) (workflow.Workflow, error) {
+) (WorkflowJob, error) {
 	result, err := q.Client.BLPop(
 		ctx,
 		0,
@@ -53,14 +61,14 @@ func (q *RedisQueue) DequeueWorkflow(
 	).Result()
 
 	if err != nil {
-		return workflow.Workflow{}, err
+		return WorkflowJob{}, err
 	}
 
-	var wf workflow.Workflow
+	var job WorkflowJob
 
-	if err := json.Unmarshal([]byte(result[1]), &wf); err != nil {
-		return workflow.Workflow{}, err
+	if err := json.Unmarshal([]byte(result[1]), &job); err != nil {
+		return WorkflowJob{}, err
 	}
 
-	return wf, nil
+	return job, nil
 }
