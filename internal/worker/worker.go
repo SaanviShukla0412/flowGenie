@@ -2,13 +2,16 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SaanviShukla0412/flowGenie/internal/database"
+	"github.com/SaanviShukla0412/flowGenie/internal/execution"
 	"github.com/SaanviShukla0412/flowGenie/internal/executor"
 	"github.com/SaanviShukla0412/flowGenie/internal/queue"
+	"github.com/SaanviShukla0412/flowGenie/internal/workflow"
 )
 
 type Worker struct {
@@ -65,6 +68,7 @@ func (w *Worker) Start(ctx context.Context) {
 			continue
 		}
 
+		executionContext := execution.NewContext()
 		workflowFailed := false
 
 		for _, step := range wf.Steps {
@@ -74,7 +78,10 @@ func (w *Worker) Start(ctx context.Context) {
 				step.Type,
 			)
 
-			if err := w.Executor.Execute(ctx, step); err != nil {
+			resolvedStep := resolveStepTemplates(step, executionContext)
+
+			output, err := w.Executor.Execute(ctx, resolvedStep)
+			if err != nil {
 				log.Printf(
 					"Step failed: name=%s error=%v",
 					step.Name,
@@ -84,6 +91,15 @@ func (w *Worker) Start(ctx context.Context) {
 				workflowFailed = true
 				break
 			}
+
+			log.Printf(
+				"Step completed: name=%s output=%s",
+				step.Name,
+				output,
+			)
+			parsedOutput := parseStepOutput(output)
+
+			executionContext.SetOutput(step.Name, parsedOutput)
 		}
 
 		if workflowFailed {
@@ -125,4 +141,44 @@ func (w *Worker) Start(ctx context.Context) {
 			wf.ID,
 		)
 	}
+}
+
+func resolveStepTemplates(
+	step workflow.Step,
+	executionContext *execution.Context,
+) workflow.Step {
+	resolvedStep := step
+
+	if step.Config == nil {
+		return resolvedStep
+	}
+
+	resolvedConfig := make(map[string]interface{})
+
+	for key, value := range step.Config {
+		stringValue, ok := value.(string)
+		if !ok {
+			resolvedConfig[key] = value
+			continue
+		}
+
+		resolvedConfig[key] = execution.ResolveTemplate(
+			stringValue,
+			executionContext,
+		)
+	}
+
+	resolvedStep.Config = resolvedConfig
+
+	return resolvedStep
+}
+
+func parseStepOutput(output string) interface{} {
+	var parsed map[string]interface{}
+
+	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+		return output
+	}
+
+	return parsed
 }

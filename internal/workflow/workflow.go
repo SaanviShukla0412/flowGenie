@@ -1,8 +1,9 @@
 package workflow
 
 type Step struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name   string                 `json:"name"`
+	Type   string                 `json:"type"`
+	Config map[string]interface{} `json:"config"`
 }
 
 type Workflow struct {
