@@ -51,6 +51,12 @@ func main() {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
+
+		if err := workflow.Validate(wf); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		wf.ID = "wf_" + uuid.New().String()
 		stepsJSON, err := json.Marshal(wf.Steps)
 		if err != nil {
