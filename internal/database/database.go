@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	"github.com/jackc/pgx/v5"
 
@@ -11,9 +12,13 @@ import (
 )
 
 func Connect() (*pgx.Conn, error) {
+	connString := os.Getenv("DATABASE_URL")
+	if connString == "" {
+		connString = "postgres://saanvi.shukla@localhost:5432/flowgenie"
+	}
 	conn, err := pgx.Connect(
 		context.Background(),
-		"postgres://saanvi.shukla@localhost:5432/flowgenie",
+		connString,
 	)
 
 	if err != nil {
