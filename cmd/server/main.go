@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -208,8 +212,40 @@ func main() {
 		json.NewEncoder(w).Encode(response)
 	})
 
-	log.Println("FlowGenie server running on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal(err)
+	server := &http.Server{
+		Addr: ":8080",
 	}
+
+	go func() {
+		log.Println("FlowGenie server running on :8080")
+
+		if err := server.ListenAndServe(); err != nil &&
+			err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+
+	signal.Notify(
+		stop,
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+
+	<-stop
+
+	log.Println("Shutting down FlowGenie server...")
+
+	shutdownContext, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownContext); err != nil {
+		log.Printf("Server shutdown failed: %v", err)
+	}
+
+	log.Println("FlowGenie server stopped")
 }
