@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/SaanviShukla0412/flowGenie/internal/database"
+	"github.com/SaanviShukla0412/flowGenie/internal/execution"
 	"github.com/SaanviShukla0412/flowGenie/internal/queue"
 	"github.com/SaanviShukla0412/flowGenie/internal/workflow"
 )
@@ -180,8 +181,25 @@ func main() {
 			return
 		}
 
+		steps, err := database.GetExecutionStepsByExecutionID(
+			db,
+			executionID,
+		)
+		if err != nil {
+			http.Error(w, "failed to get execution steps", http.StatusInternalServerError)
+			return
+		}
+
+		response := struct {
+			Execution *execution.Execution      `json:"execution"`
+			Steps     []execution.ExecutionStep `json:"steps"`
+		}{
+			Execution: exec,
+			Steps:     steps,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(exec)
+		json.NewEncoder(w).Encode(response)
 	})
 
 	log.Println("FlowGenie server running on :8080")
