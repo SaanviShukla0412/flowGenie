@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/SaanviShukla0412/flowGenie/internal/workflow"
 )
@@ -156,5 +157,196 @@ func TestExecuteUnknownStepFails(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error for unknown step type")
+	}
+}
+
+func TestExecuteHTTPTimeout(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(100 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message":"hello"}`))
+		}),
+	)
+	defer server.Close()
+
+	executor := NewExecutor()
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Millisecond,
+	)
+	defer cancel()
+
+	_, err := executor.Execute(
+		ctx,
+		workflow.Step{
+			Name: "Timeout Test",
+			Type: "http",
+			Config: map[string]interface{}{
+				"method": "GET",
+				"url":    server.URL,
+			},
+		},
+	)
+
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
+// ADD THE NEW TEST HERE
+
+func TestExecuteHTTPRetriesOnServerError(t *testing.T) {
+	attempts := 0
+
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+
+			if attempts < 3 {
+				http.Error(
+					w,
+					`{"error":"temporary failure"}`,
+					http.StatusInternalServerError,
+				)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message":"success"}`))
+		}),
+	)
+	defer server.Close()
+
+	executor := NewExecutor()
+
+	output, err := executor.Execute(
+		context.Background(),
+		workflow.Step{
+			Name: "Retry Test",
+			Type: "http",
+			Config: map[string]interface{}{
+				"method":  "GET",
+				"url":     server.URL,
+				"retries": float64(2),
+			},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if output != `{"message":"success"}` {
+		t.Errorf("unexpected output: %s", output)
+	}
+
+	if attempts != 3 {
+		t.Errorf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestExecuteHTTPDoesNotRetryOnClientError(t *testing.T) {
+	attempts := 0
+
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+
+			http.Error(
+				w,
+				`{"error":"bad request"}`,
+				http.StatusBadRequest,
+			)
+		}),
+	)
+	defer server.Close()
+
+	executor := NewExecutor()
+
+	_, err := executor.Execute(
+		context.Background(),
+		workflow.Step{
+			Name: "No Retry Test",
+			Type: "http",
+			Config: map[string]interface{}{
+				"method":  "GET",
+				"url":     server.URL,
+				"retries": float64(2),
+			},
+		},
+	)
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if attempts != 1 {
+		t.Errorf("expected 1 attempt, got %d", attempts)
+	}
+}
+
+func TestExecuteHTTPPostBodySurvivesRetry(t *testing.T) {
+	attempts := 0
+
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("failed to read request body: %v", err)
+			}
+
+			if string(body) != `{"name":"Saanvi"}` {
+				t.Errorf(
+					"expected body %s, got %s",
+					`{"name":"Saanvi"}`,
+					string(body),
+				)
+			}
+
+			if attempts < 2 {
+				http.Error(
+					w,
+					`{"error":"temporary failure"}`,
+					http.StatusInternalServerError,
+				)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"success"}`))
+		}),
+	)
+	defer server.Close()
+
+	executor := NewExecutor()
+
+	output, err := executor.Execute(
+		context.Background(),
+		workflow.Step{
+			Name: "POST Retry Test",
+			Type: "http",
+			Config: map[string]interface{}{
+				"method":  "POST",
+				"url":     server.URL,
+				"body":    `{"name":"Saanvi"}`,
+				"retries": float64(1),
+			},
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if output != `{"status":"success"}` {
+		t.Errorf("unexpected output: %s", output)
+	}
+
+	if attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts)
 	}
 }
