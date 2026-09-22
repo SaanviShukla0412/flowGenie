@@ -74,6 +74,113 @@ func UpdateExecutionStatus(
 	return err
 }
 
+func CreateExecutionStep(
+	conn *pgx.Conn,
+	id string,
+	executionID string,
+	stepName string,
+	stepType string,
+	status string,
+) error {
+	_, err := conn.Exec(
+		context.Background(),
+		`INSERT INTO execution_steps (
+			id,
+			execution_id,
+			step_name,
+			step_type,
+			status
+		)
+		VALUES ($1, $2, $3, $4, $5)`,
+		id,
+		executionID,
+		stepName,
+		stepType,
+		status,
+	)
+
+	return err
+}
+
+func UpdateExecutionStep(
+	conn *pgx.Conn,
+	id string,
+	status string,
+	output *string,
+	stepError *string,
+) error {
+	_, err := conn.Exec(
+		context.Background(),
+		`UPDATE execution_steps
+		 SET status = $1,
+		     output = $2,
+		     error = $3,
+		     completed_at = NOW()
+		 WHERE id = $4`,
+		status,
+		output,
+		stepError,
+		id,
+	)
+
+	return err
+}
+
+func GetExecutionStepsByExecutionID(
+	conn *pgx.Conn,
+	executionID string,
+) ([]execution.ExecutionStep, error) {
+	rows, err := conn.Query(
+		context.Background(),
+		`SELECT
+			id,
+			execution_id,
+			step_name,
+			step_type,
+			status,
+			output,
+			error,
+			started_at,
+			completed_at
+		 FROM execution_steps
+		 WHERE execution_id = $1
+		 ORDER BY started_at ASC`,
+		executionID,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	steps := make([]execution.ExecutionStep, 0)
+
+	for rows.Next() {
+		var step execution.ExecutionStep
+
+		err := rows.Scan(
+			&step.ID,
+			&step.ExecutionID,
+			&step.StepName,
+			&step.StepType,
+			&step.Status,
+			&step.Output,
+			&step.Error,
+			&step.StartedAt,
+			&step.CompletedAt,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		steps = append(steps, step)
+	}
+
+	return steps, nil
+}
+
 func GetExecutionByID(
 	conn *pgx.Conn,
 	id string,

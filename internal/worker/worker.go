@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SaanviShukla0412/flowGenie/internal/database"
@@ -72,6 +73,21 @@ func (w *Worker) Start(ctx context.Context) {
 		workflowFailed := false
 
 		for _, step := range wf.Steps {
+			executionStepID := "step_" + uuid.New().String()
+			if err := database.CreateExecutionStep(
+				w.DB,
+				executionStepID,
+				job.ExecutionID,
+				step.Name,
+				step.Type,
+				"running",
+			); err != nil {
+				log.Printf(
+					"Failed to create execution step: name=%s error=%v",
+					step.Name,
+					err,
+				)
+			}
 			log.Printf(
 				"Executing step: name=%s type=%s",
 				step.Name,
@@ -82,6 +98,22 @@ func (w *Worker) Start(ctx context.Context) {
 
 			output, err := w.Executor.Execute(ctx, resolvedStep)
 			if err != nil {
+				errorMessage := err.Error()
+
+				if updateErr := database.UpdateExecutionStep(
+					w.DB,
+					executionStepID,
+					"failed",
+					nil,
+					&errorMessage,
+				); updateErr != nil {
+					log.Printf(
+						"Failed to update execution step: name=%s error=%v",
+						step.Name,
+						updateErr,
+					)
+				}
+
 				log.Printf(
 					"Step failed: name=%s error=%v",
 					step.Name,
@@ -97,6 +129,19 @@ func (w *Worker) Start(ctx context.Context) {
 				step.Name,
 				output,
 			)
+			if updateErr := database.UpdateExecutionStep(
+				w.DB,
+				executionStepID,
+				"completed",
+				&output,
+				nil,
+			); updateErr != nil {
+				log.Printf(
+					"Failed to update execution step: name=%s error=%v",
+					step.Name,
+					updateErr,
+				)
+			}
 			parsedOutput := parseStepOutput(output)
 
 			executionContext.SetOutput(step.Name, parsedOutput)
